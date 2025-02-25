@@ -9,26 +9,18 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r message=FALSE, warning=FALSE}
-library(here)
-library(knitr)
-library(tidyverse)
-library(kableExtra)
-library(RColorBrewer)
-library(colorspace)
-library(adegenet)
-library(poppr)
-library(hierfstat)
-library(cowplot)
-library(forcats)
-library(geosphere)
-library(vegan)
-library(patchwork)
-library(ggforce)
-library(magick)
-library(ggrepel)
-library(gplots)
-library(reshape2)
+```{r message=FALSE, warning=FALSE, results="hide"}
+packages <- c("here", "knitr", "tidyverse", "kableExtra", "RColorBrewer", 
+              "colorspace", "adegenet", "poppr", "hierfstat", "cowplot", 
+              "forcats", "geosphere", "vegan", "patchwork", "ggforce", 
+              "magick", "ggrepel", "gplots", "reshape2", "sf", "polysat")
+
+installed_packages <- packages %in% rownames(installed.packages())
+if(any(!installed_packages)) {
+  install.packages(packages[!installed_packages])
+}
+
+lapply(packages, library, character.only = TRUE)
 ```
 
 ### Microsatellite markers
@@ -747,6 +739,9 @@ colnames(mantel_results) <- c("Site ID", "R statistic", "P value", "n")
 rownames(mantel_results) <- NULL
 
 mantel_results %>%
+  write.csv(here("tables", "mantel_test_results.csv"), row.names = FALSE)
+
+mantel_results %>%
   kbl(caption="Mantel test results", format = "html", table.attr = "style='width:75%;'") %>%
   kable_styling(position = "left")
 ```
@@ -853,7 +848,10 @@ colnames(amova_df) <- c("Source of variation",
 rownames(amova_df) <- NULL
 
 amova_df %>%
-  kbl(caption="AMOVA results", format = "html", table.attr = "style='width:100%;'") %>%
+  write.csv(here("tables", "table_3_amova_results.csv"), row.names = FALSE)
+
+amova_df %>%
+  kbl(caption="<strong>Table 3:</strong> AMOVA results", format = "html", table.attr = "style='width:100%;'", escape = FALSE) %>%
   kable_styling(position = "left")
 ```
 
@@ -1003,11 +1001,13 @@ ggsave(here("figures", "figure_5_haplotype_map_network.tiff"), dpi=800, height=8
 ggsave(here("figures", "figure_5_haplotype_map_network.png"), dpi=800, height=80, width=165, units="mm", bg="white", plot=p)
 p
 
-# haplotypes <- haplotypes %>%
-#   left_join(., sites[2:3], by=c("site" = "site")) %>%
-#   select(site, name, starts_with("HAP"))
-# 
-# write.csv(haplotypes, "post-review-tables/table_4_mitochondrial_haplotypes.csv", row.names=FALSE)
+haplotypes <- haplotypes %>%
+  left_join(., sites[3:4], by=c("site" = "site")) %>%
+  select(name, starts_with("HAP")) %>%
+  distinct()
+
+haplotypes %>%
+  write.csv(here("tables", "table_4_mitochondrial_haplotypes.csv"), row.names=FALSE)
 ```
 
 ## Supplementary figures
@@ -1509,4 +1509,106 @@ p <- plot_grid(p1, p2, ncol = 1, labels = c("A", "B"), label_size = 12, rel_widt
 ggsave(here("figures", "figure_S4_STRUCTURE_plots.tiff"), dpi=800, height=120, width=165, units="mm", bg="white", plot=p)
 ggsave(here("figures", "figure_S4_STRUCTURE_plots.png"), dpi=800, height=120, width=165, units="mm", bg="white", plot=p)
 p
+```
+
+## Table S1: SPAGeDi gene diversity (He) values
+
+This is a table of the gene diversity results from the SPAGeDi output calculated in the Table S2 section below.
+
+```{r}
+gene_diversity <- read.table(
+  here("data", "spagedi_output.txt"), skip = 24, nrows = 8, sep = "\t", header = FALSE, fill = TRUE) %>%
+  select(2,3,10)
+
+colnames(gene_diversity) <- c("Site", "Sample size", "He")
+gene_diversity$Site[gene_diversity$Site == "All categories confounded"] <- "All sites"
+num_idx <- suppressWarnings(!is.na(as.numeric(gene_diversity$Site)))
+gene_diversity$Site[num_idx] <- sites$name[ match(as.numeric(gene_diversity$Site[num_idx]), sites$number) ]
+
+gene_diversity <- gene_diversity %>%
+    mutate(Site = factor(Site, levels = c(sort(unique(Site[Site != "All sites"])), "All sites"))) %>%
+  arrange(Site)
+
+gene_diversity %>%
+  write.csv(here("tables", "table_S1_spagedi_gene_diversity.csv"), row.names = FALSE)
+
+gene_diversity %>%
+  kbl(caption="<strong>Table S1:</strong> Gene diversity values from SPAGeDi", format = "html", table.attr = "style='width:50%;'", escape = FALSE) %>%
+  kable_styling(position = "left")
+```
+
+## Table S2: SPAGeDi kinship values
+
+Spatial analysis was performed using SPAGeDi 1.5d 2017 (Hardy and Vekemans 2002) to calculate the overall and site-level gene diversity corrected for sample size (He) (Nei 1978) and to estimate kinship and its relationship with spatial distribution of samples. The Loiselle kinship estimator (Loiselle et al. 1995) is used, because it is suitable for haploid data and is robust to the presence of low frequency alleles. SPAGeDi was run using the ‘pairwise’, ‘within pairs’, and ‘whole sample reference allele frequencies’ options.
+
+```{r message=FALSE, warning=FALSE}
+## Create genambig object from ant genotype data
+
+genambig_obj <- as.genambig(ant_gen)
+
+n_samp <- nInd(ant_gen)
+ploidy_vector <- rep(1, n_samp)
+Ploidies(genambig_obj) <- ploidy_vector
+PopInfo(genambig_obj) <- as.integer(pop(ant_gen))
+PopNames(genambig_obj) <- levels(pop(ant_gen))
+Usatnts(genambig_obj) <- rep(2, nLoc(ant_gen))
+
+## Merge in nest location data
+
+nest_locs_file <- here("data", "nest_lats_lons.tsv")
+nest_lats_lons <- read_tsv(nest_locs_file)
+
+ids_lats_lons <- id_to_nest %>%
+  left_join(nest_lats_lons, by=c("nest" = "nest"))
+
+rownames(ids_lats_lons) <- ids_lats_lons$id
+
+## Convert lats/lons to metre coordinates that will work better with SPAGeDi
+
+coords <- ids_lats_lons[Samples(genambig_obj),] %>%
+  select(X=lon, Y=lat)
+
+## 4326 is the code for the WGS84 coordinate system, which uses latitude and longitude in degrees
+
+coords_sf <- st_as_sf(coords, coords = c("X", "Y"), crs = 4326)
+
+## Transform to UK UTM zone and convert to metres
+
+coords_sf_proj <- st_transform(coords_sf, crs = 27700)
+coords_metres <- st_coordinates(coords_sf_proj)
+  
+rownames(coords_metres) <- Samples(genambig_obj)
+
+## Write to a SPAGeDi format file
+
+write.SPAGeDi(
+  object   = genambig_obj,
+  file     = here("data", "spagedi_input.txt"),
+  allelesep= "",
+  digits   = 3,
+  spatcoord = coords_metres
+)
+
+## Read in SPAGeDi output
+
+## Kinship values
+kinship <- read.table(here("data", "spagedi_output.txt"), skip = 126, header = FALSE, sep = "\t")
+kinship <- kinship[!apply(kinship, 1, function(row) {
+  all(is.na(row) | trimws(as.character(row)) == "")
+}), ]
+kinship <- kinship[, colSums(is.na(kinship) | kinship == "") != nrow(kinship)]
+kinship <- kinship %>%
+  select(-4)
+colnames(kinship) <- c("Locus",
+                       "Pairwise kinship within host nests",
+                       "Pairwise kinship between host nests within sites",
+                       "Slope kinship against linear distance",
+                       "Slope kinship against log distance")
+
+kinship %>%
+  write.csv(here("tables", "table_S2_spagedi_kinship.csv"), row.names = FALSE)
+
+kinship %>%
+  kbl(caption="<strong>Table S2:</strong> Kinship results from SPAGeDi", format = "html", table.attr = "style='width:75%;'", escape = FALSE) %>%
+  kable_styling(position = "left")
 ```
