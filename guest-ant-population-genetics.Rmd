@@ -1008,6 +1008,10 @@ haplotypes <- haplotypes %>%
 
 haplotypes %>%
   write.csv(here("tables", "table_4_mitochondrial_haplotypes.csv"), row.names=FALSE)
+
+haplotypes %>%
+  kbl(caption="<strong>Table 4:</strong> Mitochondrial haplotypes", format = "html", table.attr = "style='width:50%;'", escape = FALSE) %>%
+  kable_styling(position = "left")
 ```
 
 ## Supplementary figures
