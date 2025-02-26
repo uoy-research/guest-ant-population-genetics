@@ -13,7 +13,8 @@ knitr::opts_chunk$set(echo = TRUE)
 packages <- c("here", "knitr", "tidyverse", "kableExtra", "RColorBrewer", 
               "colorspace", "adegenet", "poppr", "hierfstat", "cowplot", 
               "forcats", "geosphere", "vegan", "patchwork", "ggforce", 
-              "magick", "ggrepel", "gplots", "reshape2", "sf", "polysat")
+              "magick", "ggrepel", "gplots", "reshape2", "sf", "polysat",
+              "strataG")
 
 installed_packages <- packages %in% rownames(installed.packages())
 if(any(!installed_packages)) {
@@ -395,6 +396,55 @@ p <- plot_grid(p1, p2, ncol = 2, labels = c("A", "B"), label_size = 12)
 ggsave(here("figures", "figure_2_allele_frequencies.tiff"), dpi=800, height=70, width=165, units="mm", bg="white", plot=p)
 ggsave(here("figures", "figure_2_allele_frequencies.png"), dpi=800, height=70, width=165, units="mm", bg="white", plot=p)
 p
+```
+
+### M-ratio tests to detect population bottlenecks
+
+The code below runs an M-ratio test with a function from the strataG library by stratum (population), and then calculates the mean M-ratio across the loci for each population. Apparently, a rule of thumb from Garza & Williamson (2001) is that an M-ratio of < ~0.68 can indicate a recent bottleneck. The values below are all above that, so this is further evidence of no recent bottlenecks.
+
+```{r message=FALSE, warning=FALSE}
+## Read in genotype data and refomat as gtypes
+
+df <- read_tsv(here("data/genotypes", "merged_loci_r_haploid_only.str"), col_names = TRUE)
+df[, 3:23] <- lapply(df[, 3:23], function(x) as.numeric(x) + 100)
+
+g <- df2gtypes(
+  x          = df,
+  ploidy     = 1,
+  id.col     = 1,
+  strata.col = 2,
+  loc.col    = 3
+)
+
+## Run M-ratio test
+
+mr <- mRatio(g, by.strata=TRUE, rpt.size = 8:1)
+
+## Calculate means of M-ratios
+
+sites_ids_names <- sites %>%
+  select(pop, site, name) %>%
+  distinct()
+
+mr_means <- mr %>%
+  group_by(stratum) %>%
+  summarize(
+    mean_mratio = mean(m.ratio, na.rm = TRUE)
+  ) %>%
+  rename(pop = stratum) %>%
+  mutate(pop=as.numeric(pop)) %>%
+  left_join(sites_ids_names, by=c("pop" = "pop")) %>%
+  select(site, name, mean_mratio) %>%
+  arrange(site)
+
+colnames(mr_means) <- c("Site ID", "Site", "Mean M-ratio")
+
+mr_means %>%
+  write.csv(here("tables", "m_ratio_test_results.csv"), row.names = FALSE)
+
+mr_means %>%
+  kbl(caption="M-ratio test results", format = "html", table.attr = "style='width:50%;'") %>%
+  kable_styling(position = "left")
 ```
 
 ### Figure 3: PCA and DAPC of microsatellite data
@@ -1643,7 +1693,7 @@ p
 
 This is a table of the gene diversity results from the SPAGeDi output calculated in the Table S2 section below.
 
-```{r}
+```{r message=FALSE, warning=FALSE}
 gene_diversity <- read.table(
   here("data/spagedi", "spagedi_output.txt"), skip = 24, nrows = 8, sep = "\t", header = FALSE, fill = TRUE) %>%
   select(2,3,10)
