@@ -1,0 +1,1742 @@
+---
+title: "Guest ant population genetics analysis"
+author: "Sandy Macdonald"
+date: "26/02/2025"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE, results="hide"}
+packages <- c("here", "knitr", "tidyverse", "kableExtra", "RColorBrewer", 
+              "colorspace", "adegenet", "poppr", "hierfstat", "cowplot", 
+              "forcats", "geosphere", "vegan", "patchwork", "ggforce", 
+              "magick", "ggrepel", "gplots", "reshape2", "sf", "polysat")
+
+installed_packages <- packages %in% rownames(installed.packages())
+if(any(!installed_packages)) {
+  install.packages(packages[!installed_packages])
+}
+
+lapply(packages, library, character.only = TRUE)
+```
+
+### Microsatellite markers
+
+The two sets of microsatellite data were exported, from the provided Excel sheets, to tab-separated values (TSV) files named `95_samples_8_loci.txt` and `66_samples_21_loci.txt`. These were then reconciled with each other using Python (code below) and exported to a single, merged TSV file called `merged_loci.str` for analysis using STRUCTURE
+
+Only one locus in one individual (GA86, locus 13) differed between the two datasets, and this was removed. Where genotype data were available in one dataset and not the other, the one with available genotype data was retained.
+
+Several changes to the formatting of the data were made to be compatible with STRUCTURE:
+
+1. Alleles were renamed to be two digits long, i.e. 113 was converted to 13.
+2. Pairs of columns representing each allele were shifted to be in consecutive rows rather than columns.
+3. Missing values were changed from "NA" to "-99".
+4. Sites were encoded as a single digit number, 1 to 7.
+
+```python
+#!/usr/bin/env python3
+
+# Read the data from each of the two datasets in separately and then reconcile.
+
+_95 = {}  # To store the data from the 95 ants/8 loci dataset.
+
+sample_to_site = {}  # Keep track of which ants belong to which site.
+
+# Parse the 95/8 file, line-by-line:
+
+with open("95_samples_8_loci.txt", "r") as f:
+    lines = f.readlines()
+
+    header = lines[0].rstrip().split("\t")
+    loci = [i[-2:] for i in header[2:] if not i == '']
+
+    for l in lines[1:]:
+        l = l.rstrip().split("\t")
+        sample = l[0]
+        site = l[1]
+        sample_to_site[sample] = site
+
+        allele1 = [i[1:] if i != "NA" else "NA" for i in l[2::2]]
+        allele2 = [i[1:] if i != "NA" else "NA" for i in l[3::2]]
+        alleles = list(zip(allele1, allele2))
+        
+        _95[sample] = {}
+        
+        for i in range(len(alleles)):
+            locus = loci[i]
+            allele = alleles[i]
+        
+            # Replace the NAs with -99, as per STRUCTURE's requirements.
+            if allele == ("NA", "NA"):
+                allele = ("-99", "-99")
+        
+            _95[sample][locus] = allele
+
+_95_loci = loci[:]  # Keep a list of the 95/8 loci.
+
+_66 = {}  # To store the data from the 66 ants/21 loci dataset.
+
+# Parse the 66/21 file in the same way:
+
+with open("66_samples_21_loci.txt", "r") as f:
+    lines = f.readlines()
+    
+    header = lines[0].rstrip().split("\t")
+    loci = [i[-2:] for i in header[2:] if not i == '']
+    
+    for l in lines[1:]:
+        l = l.rstrip().split("\t")
+        sample = l[0]
+        
+        allele1 = [i[1:] if i != "NA" else "NA" for i in l[2::2]]
+        allele2 = [i[1:] if i != "NA" else "NA" for i in l[3::2]]
+        alleles = list(zip(allele1, allele2))
+        
+        _66[sample] = {}
+        
+        for i in range(len(alleles)):
+            locus = loci[i]
+            allele = alleles[i]
+            
+            # Replace NAs with -99 again.
+            if allele == ("NA", "NA"):
+                allele = ("-99", "-99")
+            
+            _66[sample][locus] = allele
+
+_66_loci = loci[:]  # A list of the 66/21 loci.
+
+all_loci = sorted(list(set(_95_loci + _66_loci)))  # A merged list of all loci.
+
+merged = {}  # New dictionary to stored the merged data in.
+
+# Go through each sample in the 95/8 dataset, which has all the ants:
+
+for sample in _95:
+    for locus in all_loci:
+        if locus in _95[sample]:
+            # Sample is in the 66/21 dataset also:
+            if sample in _66:
+                # If the loci match between the datasets then add to the merged set:
+                if _95[sample][locus] == _66[sample][locus]:
+                    if sample in merged:
+                        merged[sample][locus] = _95[sample][locus]
+                    else:
+                        merged[sample] = {locus: _95[sample][locus]}
+                # One or other dataset has missing values for a loci:
+                elif (_95[sample][locus] == ("-99", "-99")) or (_66[sample][locus] == ("-99", "-99")):
+                    # If missing in 95/8 dataset, then use value from 66/21 dataset:
+                    if _95[sample][locus] == ("-99", "-99"):
+                        if sample in merged:
+                            merged[sample][locus] = _66[sample][locus]
+                        else:
+                            merged[sample] = {locus: _66[sample][locus]}
+                    # Otherwise, if missing from 66/21, then use 95/8 value:
+                    else:
+                        if sample in merged:
+                            merged[sample][locus] = _95[sample][locus]
+                        else:
+                            merged[sample] = {locus: _95[sample][locus]}
+                # If different in both datasets, then print sample and locus:
+                else:
+                    print(sample, locus)
+            # Add ants that are in 95/8 dataset but not 66/21:
+            else:
+                if sample in merged:
+                    merged[sample][locus] = _95[sample][locus]
+                else:
+                    merged[sample] = {locus: _95[sample][locus]}
+        # Add loci that are in 66/21 dataset but not 95/8 dataset:
+        else:
+            if sample in _66:
+                if sample in merged:
+                    merged[sample][locus] = _66[sample][locus]
+                else:
+                    merged[sample] = {locus: _66[sample][locus]}
+
+# Make a sorted list of all of the sites, and a number/site dictionary:
+all_sites = sorted(list(set(sample_to_site.values())))
+site_to_num = {all_sites[i]: str(i+1) for i in range(len(all_sites))}
+
+# Write the merged data to a file that can be used as input to STRUCTURE, with
+# each allele on successive lines:
+with open("merged_loci.str", "w") as out:
+    out.write("\t".join(all_loci) + "\n")
+    for sample in merged:
+        allele1s = []
+        allele2s = []
+        for locus in all_loci:
+            if locus in merged[sample]:
+                allele1s.append(merged[sample][locus][0])
+                allele2s.append(merged[sample][locus][1])
+            else:
+                allele1s.append("-99")
+                allele2s.append("-99")
+        out.write("\t".join([sample, site_to_num[sample_to_site[sample]], "1"] + allele1s) + "\n")
+        out.write("\t".join([sample, site_to_num[sample_to_site[sample]], "1"] + allele2s) + "\n")
+```
+
+The site numbers are as follows:
+
+```{r message=FALSE, warning=FALSE}
+sites <- read_delim(here("data/metadata", "site_nums.txt"), col_names = c("number", "site", "name"), delim="\t")
+
+sites_table <- sites
+colnames(sites_table) <- c("Population number", "Site ID", "Site name")
+
+sites_table %>%
+  kbl(caption="Site numbers and names", format = "html", table.attr = "style='width:50%;'") %>%
+  kable_styling(position = "left")
+```
+
+```{r message=FALSE, warning=FALSE}
+nest_locs_file <- here("data/metadata", "nest_lats_lons.tsv")
+nest_lats_lons <- read_tsv(nest_locs_file)
+
+lats_lons <- nest_lats_lons %>%
+  group_by(pop) %>%
+  mutate(lat=mean(lat), lon=mean(lon)) %>%
+  ungroup() %>%
+  select(pop, lat, lon) %>%
+  distinct() %>%
+  left_join(sites, c("pop" = "number")) %>%
+  rename(num = pop) %>%
+  select(num, site, name, lon, lat) %>%
+  write_csv(here("data/metadata", "site_lats_lons.csv"))
+```
+
+After merging the two sets of microsatellite data, the poppr R library was used to filter out any loci or individuals that had more than 25% missing data, so as not to bias the analysis with sparse sample data, producing a final input file `merged_filtered.str`. This was done as follows:
+
+```{r message=FALSE, warning=FALSE, results="hide"}
+## Read in microsatellite data and convert to GenInd format object
+
+df <- read_tsv(here("data/genotypes", "merged_loci_r_haploid_only.str"), col_names = TRUE)
+pop <- df$pop
+ind_names <- df$ind
+df <- df %>% dplyr::select(-pop, -ind)
+rownames(df) <- ind_names
+ant_gen <- df2genind(df, ploidy=1, sep="", pop=pop)
+
+## Filter data, to exclude missing loci and genotypes
+
+ant_gen = missingno(ant_gen, type = "loci", cutoff = 0.25)
+ant_gen = missingno(ant_gen, type = "geno", cutoff = 0.25)
+
+## Remove duplicates
+
+mlg <- mlg(ant_gen)
+
+dups_ant = mlg.id(ant_gen)
+ant_dups <- c()
+for (i in dups_ant){
+  if (length(dups_ant[i]) > 1){
+    print(i)
+    ant_dups <- c(ant_dups, i[1:length(i)-1])
+  }
+}
+
+ant_nodups = indNames(ant_gen)[! indNames(ant_gen) %in% ant_dups]
+ant_gen = ant_gen[ant_nodups, ]
+
+## Write filtered data to file
+
+genind2genalex(ant_gen, filename=here("data/metadata", "merged_filtered.str"), sep="\t", overwrite=TRUE)
+```
+
+### Figure 1: Allelic richness and private alleles.
+
+```{r message=FALSE, warning=FALSE, fig.width = 12, fig.height = 6, fig.cap = "**Fig. 1**: Allelic richness and private alleles."}
+## Make data frame with population information for the individuals
+
+pops <- data.frame(id = rownames(ant_gen$tab), pop = ant_gen$pop)
+pops$pop <- as.numeric(as.character(pops$pop))
+
+## Merge in site data
+
+sites <- read_delim(here("data/metadata", "site_nums.txt"), col_names = c("number", "site", "name"), delim="\t")
+sites <- pops %>%
+  left_join(sites, b=c(pop = "number"))
+
+ant_ids <- rownames(ant_gen$tab)
+
+rownames(sites) <- sites$id
+sites <- sites[ant_ids,]
+sites_copy = sites
+
+## Calculate allelic richness values and merge in site data
+
+allelic_richness <- allelic.richness(ant_gen)
+allelic_richness_wide <- data.frame(allelic_richness$Ar)
+
+sites_unique <- sites %>%
+  select(pop, site) %>%
+  distinct()
+
+rownames(sites_unique) <- sites_unique$pop
+
+col_numbers <- str_extract(colnames(allelic_richness_wide), "\\d+")
+col_numbers <- as.character(col_numbers)
+name_mapping <- setNames(sites_unique$site, as.character(sites_unique$pop))
+colnames(allelic_richness_wide) <- name_mapping[col_numbers]
+
+allelic_richness_long <- allelic_richness_wide %>%
+  rownames_to_column(var = "locus") %>%
+  pivot_longer(cols = -locus, names_to = "site", values_to = "ar")
+
+## Plot allelic richness values
+
+p1 <- allelic_richness_long %>%
+  ggplot(aes(x = fct_reorder(site, ar, .fun = mean, .desc = TRUE), y = ar)) +
+  geom_boxplot() +
+  labs(
+    x = "Site",
+    y = "Allelic richness"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    plot.title = element_text(size = 12, hjust = 0.5),
+    legend.position = "none",
+    axis.title.x = element_text(vjust = -0.5),
+    axis.title.y = element_text(vjust = 0.5),
+    plot.margin = margin(5, 5, 2.5, 5, unit = "mm")
+  )
+
+## Calculate private alleles
+
+pa <- private_alleles(ant_gen, report="data.frame", level="population")
+pa$population <- as.numeric(pa$population)
+
+pa <- pa %>%
+  dplyr::mutate(count=ifelse(count>0, 1, 0)) %>%
+  dplyr::group_by(population) %>%
+  dplyr::summarise(pa_count=sum(count)) %>%
+  dplyr::ungroup() %>%
+  dplyr::arrange(population) %>%
+  left_join(sites_unique, by=c("population" = "pop")) %>%
+  dplyr::select(site, pa_count) %>%
+  dplyr::arrange(-pa_count)
+
+ord <- pa$site
+pa$site <- factor(pa$site, levels=ord)
+
+## Plot private alleles
+
+p2 <- ggplot(data=pa, aes(x=site, y=pa_count)) + 
+  geom_col() +
+  theme_minimal(base_size=10) +
+    theme(plot.title=element_text(size=12, hjust=0.5), 
+          legend.position="none", 
+          axis.title.x = element_text(vjust=-0.5), 
+          axis.title.y = element_text(vjust=0.5),
+          plot.margin = margin(5, 5, 2.5, 5, unit = "mm")) +
+  xlab("Site") +
+  ylab("Number of private alleles")
+
+## Merge allelic richness and private allele plots and save
+
+p <- plot_grid(p1, p2, ncol = 2, labels = c("A", "B"), label_size = 12)
+ggsave(here("figures", "figure_1_allelic_richness_private_alleles.tiff"), dpi=800, height=70, width=165, units="mm", bg="white", plot=p)
+ggsave(here("figures", "figure_1_allelic_richness_private_alleles.png"), dpi=800, height=70, width=165, units="mm", bg="white", plot=p)
+p
+```
+
+### Figure 2: Allele frequencies
+
+```{r message=FALSE, warning=FALSE, fig.width = 12, fig.height = 6, fig.cap = "**Fig. 2**: Allele frequencies."}
+## Calculate allele frequencies for all sites
+
+allele_freqs <- rraf(ant_gen)
+allele_freqs <- unlist(allele_freqs, recursive=TRUE)
+allele_freqs <- data.frame(freq = allele_freqs)
+
+## Plot allele frequencies for all sites
+
+p1 <- ggplot(data=allele_freqs, aes(x=freq)) + 
+  geom_histogram(binwidth = 0.1) +
+  theme_minimal(base_size=10) +
+    theme(plot.title=element_text(size=10, hjust=0.5), 
+          legend.position="none", 
+          axis.title.x = element_text(vjust=-0.5), 
+          axis.title.y = element_text(vjust=0.5),
+          plot.margin = margin(5, 5, 2.5, 5, unit = "mm")) +
+  xlab("Allele frequency") +
+  ylab("Number of alleles") +
+  xlim(0, 1) + ylim(0, 15) +
+  ggtitle("All locations")
+
+## Calculate allele frequencies for Feshiebridge
+
+ant_gen_fb <- ant_gen[ant_gen@pop == 4]
+allele_freqs_fb <- rraf(ant_gen_fb)
+allele_freqs_fb <- unlist(allele_freqs_fb, recursive=TRUE)
+allele_freqs_fb <- data.frame(freq = allele_freqs_fb)
+
+## Plot allele frequencies for Feshiebridge
+
+p2 <- ggplot(data=allele_freqs_fb, aes(x=freq)) + 
+  geom_histogram(binwidth = 0.1) +
+  theme_minimal(base_size=10) +
+    theme(plot.title=element_text(size=10, hjust=0.5), 
+          legend.position="none", 
+          axis.title.x = element_text(vjust=-0.5), 
+          axis.title.y = element_text(vjust=0.5),
+          plot.margin = margin(5, 5, 2.5, 5, unit = "mm")) +
+  xlab("Allele frequency") +
+  ylab("Number of alleles") +
+  xlim(0, 1) + ylim(0, 30) +
+  ggtitle("Feshiebridge")
+
+## Merge plots and save
+
+p <- plot_grid(p1, p2, ncol = 2, labels = c("A", "B"), label_size = 12)
+ggsave(here("figures", "figure_2_allele_frequencies.tiff"), dpi=800, height=70, width=165, units="mm", bg="white", plot=p)
+ggsave(here("figures", "figure_2_allele_frequencies.png"), dpi=800, height=70, width=165, units="mm", bg="white", plot=p)
+p
+```
+
+### Figure 3: PCA and DAPC of microsatellite data
+
+```{r message=FALSE, warning=FALSE, results="hide", fig.width = 6, fig.height = 12, fig.cap = "**Fig. 3**: PCA and DAPC of microsatellite data."}
+## Run PCA
+
+all_sites <- sites_unique$site
+
+x = tab(ant_gen, NA.method = "mean")
+pca1 = dudi.pca(x, scannf = FALSE, scale = FALSE, nf = 3)
+percent = pca1$eig/sum(pca1$eig)*100
+
+ind_coords = as.data.frame(pca1$li)
+colnames(ind_coords) = c("Axis1","Axis2","Axis3")
+ind_coords$Ind = indNames(ant_gen)
+ind_coords$Site = as.numeric(as.character(ant_gen$pop))
+
+## Find centroids of sites
+
+ind_coords <- left_join(ind_coords, sites_unique, by=c("Site" = "pop"))
+centroid = aggregate(cbind(Axis1, Axis2, Axis3) ~ site, data = ind_coords, FUN = mean)
+ind_coords = left_join(ind_coords, centroid, by = "site", suffix = c("",".cen"))
+
+## Merge in nest and hence ant host data
+
+id_to_nest = read_tsv(here("data/metadata", "id_to_nest.txt"), col_names = c("id", "nest"))
+host_species = read_tsv(here("data/metadata", "host_species.txt"), col_names = c("nest", "host"))
+
+ind_coords <- left_join(ind_coords, id_to_nest, by=c("Ind" = "id"))
+ind_coords <- left_join(ind_coords, host_species, by=c("nest" = "nest"))
+ind_coords$site <- factor(ind_coords$site, levels = all_sites)
+
+## Plot PCA
+
+cols = brewer.pal(nPop(ant_gen), "Set2")
+xlab = paste("Axis 1 (", format(round(percent[1], 1), nsmall=1)," %)", sep="")
+ylab = paste("Axis 2 (", format(round(percent[2], 1), nsmall=1)," %)", sep="")
+
+p1 <- ggplot(data = ind_coords, aes(x = Axis1, y = Axis2)) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0) +
+  geom_segment(aes(xend = Axis1.cen, yend = Axis2.cen, colour = site), show.legend = FALSE) +
+  geom_point(aes(colour = site, fill = site, shape = factor(host)), size = 2, show.legend = TRUE) +
+  geom_label(data = centroid, aes(label = site, fill = site), size = 3, show.legend = FALSE) +
+  scale_fill_manual(values = cols) +
+  scale_colour_manual(values = cols) +
+  labs(x = xlab, y = ylab) +
+  theme_minimal(base_size=10) +
+  theme(plot.title=element_text(size=10, hjust=0.5), 
+        plot.margin = margin(5, 5, 5, 5, unit = "mm"),
+        legend.position="none",
+        axis.title.x = element_text(vjust=-0.5), 
+        axis.title.y = element_text(vjust=0.5)) + 
+  guides(fill = FALSE, color = FALSE, shape=guide_legend(title="Host species"))  +
+  ggtitle("PCA")
+
+## Run DAPC
+
+set.seed(123)
+x = tab(ant_gen, NA.method = "mean")
+crossval = xvalDapc(x, ant_gen$pop, result = "groupMean", xval.plot = FALSE)
+
+crossval$`Root Mean Squared Error by Number of PCs of PCA`
+crossval$`Number of PCs Achieving Highest Mean Success`
+crossval$`Number of PCs Achieving Lowest MSE`
+numPCs = as.numeric(crossval$`Number of PCs Achieving Lowest MSE`)
+
+dapc1 = dapc(ant_gen, ant_gen$pop, n.pca = numPCs, n.da = 3)
+percent = dapc1$eig/sum(dapc1$eig)*100
+
+ind_coords = as.data.frame(dapc1$ind.coord)
+colnames(ind_coords) = c("Axis1","Axis2","Axis3")
+ind_coords$Ind = indNames(ant_gen)
+ind_coords$Site = as.numeric(as.character(ant_gen$pop))
+
+## Merge in site data
+
+ind_coords <- left_join(ind_coords, sites_unique, by=c("Site" = "pop"))
+
+## Filter out Gaitbarrows due to small sample size
+
+ind_coords = ind_coords %>%
+  filter(site != "GB")
+
+## Find centroids of sites
+
+centroid = aggregate(cbind(Axis1, Axis2, Axis3) ~ site, data = ind_coords, FUN = mean)
+ind_coords = left_join(ind_coords, centroid, by = "site", suffix = c("",".cen"))
+
+ind_coords <- left_join(ind_coords, id_to_nest, by=c("Ind" = "id"))
+ind_coords <- left_join(ind_coords, host_species, by=c("nest" = "nest"))
+
+ind_coords$site <- factor(ind_coords$site, levels = all_sites)
+
+## Plot PCA
+
+cols = brewer.pal(nPop(ant_gen), "Set2")
+xlab = paste("Axis 1 (", format(round(percent[1], 1), nsmall=1)," %)", sep="")
+ylab = paste("Axis 2 (", format(round(percent[2], 1), nsmall=1)," %)", sep="")
+
+p2 <- ggplot(data = ind_coords, aes(x = Axis1, y = Axis2)) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0) +
+  geom_segment(aes(xend = Axis1.cen, yend = Axis2.cen, colour = site), show.legend = FALSE) +
+  geom_point(aes(colour = site, fill = site, shape = factor(host)), size = 2, show.legend = TRUE) +
+  geom_label(data = centroid, aes(label = site, fill = site), size = 3, show.legend = FALSE) +
+  scale_fill_manual(values = cols) +
+  scale_colour_manual(values = cols) +
+  labs(x = xlab, y = ylab) +
+  theme_minimal(base_size=10) +
+  theme(plot.title=element_text(size=10, hjust=0.5), 
+        plot.margin = margin(5, 5, 2.5, 5, unit = "mm"),
+        legend.position="bottom",
+        legend.box.margin = margin(l = -30),
+        legend.title = element_blank(),
+        legend.text = element_text(size = 10),
+        axis.title.x = element_text(vjust=-0.5), 
+        axis.title.y = element_text(vjust=0.5)) + 
+  guides(fill = FALSE, color = FALSE, shape = guide_legend(override.aes = list(size = 3))) +
+  ggtitle("DAPC")
+
+## Merge plots and save
+
+p <- plot_grid(p1, p2, ncol = 1, labels = c("A", "B"), label_size = 12, rel_heights = c(1, 1.15))
+ggsave(here("figures", "figure_3_PCA_DAPC.tiff"), dpi=800, height=165, width=82.5, units="mm", bg="white", plot=p)
+ggsave(here("figures", "figure_3_PCA_DAPC.png"), dpi=800, height=165, width=82.5, units="mm", bg="white", plot=p)
+p
+```
+
+### Figure 4: Pairwise linearised Fst vs. distance scatter plots
+
+A Python script---`split_genotypes_by_site.py`---was used to split the combined genotypes file `merged_loci_r_haploid_only.str` into separate site-specific genotype (`.str` extension) and nest number metadata files:
+
+```python
+#!/usr/bin/env python3
+"""
+Process nest IDs and generate site-specific structure and nest numbering files.
+"""
+
+# Map IDs to nests from file.
+id_to_nest = {}
+with open("id_to_nest.txt", "r") as f:
+    for line in f:
+        parts = line.rstrip().split()
+        id_to_nest[parts[0]] = parts[1]
+
+# Get unique sites (first two characters of nest) and nests.
+sites = list({v[:2] for v in id_to_nest.values()})
+nests = list(set(id_to_nest.values()))
+
+# Assign sequential numbers to nests per site.
+nest_nums = {}
+for site in sites:
+    nest_nums[site] = {}
+    nest_num = 1
+    for nest in sorted(nests, key=lambda x: int(x[2:])):
+        if nest.startswith(site):
+            nest_nums[site][nest] = str(nest_num)
+            nest_num += 1
+
+# Process the main structure file and output site-specific files.
+nests_done = []
+for i in range(1, 8):
+    with open("merged_loci_r_haploid_only.str", "r") as f:
+        lines = f.readlines()
+        with open(f"site_{i}_hap.str", "w") as site_out, \
+             open(f"nest_nums_{i}.txt", "w") as nest_out:
+            site_out.write(lines[0])
+            for line in lines[1:]:
+                if line.split()[1] == str(i):
+                    parts = line.rstrip().split()
+                    nest = id_to_nest[parts[0]]
+                    site = nest[:2]
+                    nest_num = nest_nums[site][nest]
+                    if nest not in nests_done:
+                        nest_out.write("\t".join([nest_num, nest]) + "\n")
+                    nests_done.append(nest)
+                    site_out.write("\t".join([parts[0], nest_num] + parts[2:]) + "\n")
+```
+
+The main genoptypes object and the separate site-specific ones were used to create scatter plots of pairwise linearised Fst versus distance at the site level, and nest level.
+
+```{r message=FALSE, warning=FALSE, fig.width = 12, fig.height = 6, fig.cap = "**Fig. 4**: Pairwise linearised Fst vs. distance scatter plots."}
+## Between-site linearised Fst vs. distance
+
+ant_fst = genet.dist(ant_gen, method = "WC84", diploid=FALSE) %>% round(digits = 3)
+fst_mat = as.matrix(ant_fst)
+
+labels = sites_unique[rownames(fst_mat),]$site
+rownames(fst_mat) <- labels
+colnames(fst_mat) <- labels
+
+## Linearise Fst
+
+linear_fst_mat = fst_mat / (1 - fst_mat)
+
+## Between-site distance matrix
+
+lats_lons = read_csv(here("data/metadata", "site_lats_lons.csv"), col_names=TRUE)
+dist_mat <- distm(lats_lons[4:5], fun = distGeo) / 1000
+
+dist_mat = as.matrix(dist_mat)
+
+labels = lats_lons$site
+rownames(dist_mat) <- labels
+colnames(dist_mat) <- labels
+
+dist_mat <- dist_mat[rownames(linear_fst_mat), rownames(linear_fst_mat)]
+
+## Run Mantel test
+
+fst_dist <- mantel(linear_fst_mat, dist_mat, method = "spearman", permutations = 9999, na.rm = TRUE)
+all_mantel <- data.frame(site=c("all"), r_statistic=c(fst_dist$statistic), p_value=c(fst_dist$signif), n=length(rownames(ant_gen$tab)))
+
+## Merge matrices
+
+linear_fst_long <- as.data.frame(as.table(linear_fst_mat)) %>%
+  rename(site1 = Var1, site2 = Var2, linear_fst = Freq)
+
+dist_long <- as.data.frame(as.table(dist_mat)) %>%
+  rename(site1 = Var1, site2 = Var2, dist = Freq)
+
+merged_df <- linear_fst_long %>%
+  inner_join(dist_long, by = c("site1", "site2")) %>%
+  mutate(
+    # Ensure consistent ordering of pairs
+    site1_ordered = pmin(as.character(site1), as.character(site2)), 
+    site2_ordered = pmax(as.character(site1), as.character(site2)), 
+    pair = paste(site1_ordered, site2_ordered, sep = "_")
+  ) %>%
+  select(pair, linear_fst, dist) %>%
+  distinct(pair, .keep_all = TRUE) %>%  # Remove duplicate flipped pairs
+  filter(!grepl("^([A-Za-z]+)_\\1$", pair))  # Remove self-comparisons (AV_AV, FB_FB)
+
+## Scatter plot of pairwise linear Fst vs. distances
+
+p1 <- ggplot(data = merged_df, aes(y = linear_fst, x = dist)) +
+  geom_point() +
+  theme_minimal(base_size=10) +
+  theme(plot.title=element_text(size=10, hjust=0.5), 
+        legend.position="none", 
+        axis.title.x = element_text(vjust=-0.5), 
+        axis.title.y = element_text(vjust=0.5),
+        plot.margin = margin(5, 5, 2.5, 5, unit = "mm")) +
+  labs(
+    y = "Linearised Fst (Fst / 1 - Fst)",
+    x = "Distance (km)"
+  ) +
+  xlim(0, 600) + ylim(0, 1)
+
+## Per-site linearised Fst vs. distance
+
+nest_locs_file <- here("data/metadata", "nest_lats_lons.tsv")
+id_to_nest_file = here("data/metadata", "id_to_nest.txt")
+
+make_merged_fst_dist_df <- function(nest_locs_file, id_to_nest_file, genotypes_file, nests_file, population_number, population_id){
+  ## Read in nest locations and ant ID to nest mapping
+  nest_lats_lons <- read_tsv(nest_locs_file)
+  id_to_nest = read_tsv(id_to_nest_file, col_names = c("id", "nest"))
+  
+  ids_lats_lons <- id_to_nest %>%
+    left_join(nest_lats_lons, by=c("nest" = "nest"))
+  
+  rownames(ids_lats_lons) <- ids_lats_lons$id
+  
+  ## Build linearised Fst matrix
+  df <- read_tsv(genotypes_file, col_names = TRUE)
+  pop <- df$pop
+  ind_names <- df$ind
+  df <- df %>% dplyr::select(-pop, -ind)
+  rownames(df) <- ind_names
+  ant_gen <- df2genind(df, ploidy=1, sep="", pop=pop)
+  
+  ant_gen = missingno(ant_gen, type = "loci", cutoff = 0.5)
+  ant_gen = missingno(ant_gen, type = "geno", cutoff = 0.5)
+  
+  ant_fst = genet.dist(ant_gen, method = "WC84", diploid=FALSE) %>% round(digits = 3)
+  fst_mat = as.matrix(ant_fst)
+  fst_mat[fst_mat < 0 | is.na(fst_mat)] <- 0
+  
+  nest_nums <- read_tsv(nests_file, col_names=c("num", "id"))
+  indices <- rownames(fst_mat)
+  rownames(fst_mat) <- nest_nums[indices,]$id
+  colnames(fst_mat) <- nest_nums[indices,]$id
+  
+  linear_fst_mat = fst_mat / (1 - fst_mat)
+
+  ## Build distance matrix  
+  lats_lons = ids_lats_lons %>%
+    select(pop, nest, lon, lat) %>%
+    filter(pop == population_number) %>%
+    select(-pop) %>%
+    distinct()
+  dist_mat <- distm(lats_lons[2:3], fun = distGeo) / 1000
+  
+  dist_mat = as.matrix(dist_mat)
+  
+  labels = lats_lons$nest
+  rownames(dist_mat) <- labels
+  colnames(dist_mat) <- labels
+  
+  dist_mat <- dist_mat[rownames(linear_fst_mat), rownames(linear_fst_mat)]
+  
+  ## Run Mantel test between linearised Fst and distance
+  fst_dist <- mantel(linear_fst_mat, dist_mat, method = "spearman", permutations = 9999, na.rm = TRUE)
+  mantel_results <- c(population_id, fst_dist$statistic, fst_dist$signif, length(rownames(ant_gen$tab)))
+
+  ## Join everything up
+  linear_fst_long <- as.data.frame(as.table(linear_fst_mat)) %>%
+    rename(nest1 = Var1, nest2 = Var2, linear_fst = Freq)
+  
+  dist_long <- as.data.frame(as.table(dist_mat)) %>%
+    rename(nest1 = Var1, nest2 = Var2, dist = Freq)
+  
+  site_df <- linear_fst_long %>%
+    inner_join(dist_long, by = c("nest1", "nest2")) %>%
+    mutate(
+      # Ensure consistent ordering of pairs
+      nest1_ordered = pmin(as.character(nest1), as.character(nest2)),
+      nest2_ordered = pmax(as.character(nest1), as.character(nest2)),
+      pair = paste(nest1_ordered, nest2_ordered, sep = "_")
+    ) %>%
+    select(pair, linear_fst, dist) %>%
+    distinct(pair, .keep_all = TRUE) %>%  # Remove duplicate flipped pairs
+    filter(!grepl("^([A-Za-z0-9]+)_\\1$", pair))  # Remove self-comparisons
+  
+  site_df$site <- rep(population_number, dim(site_df)[1])
+  
+  return(list(df=site_df, mantel_results=mantel_results))
+}
+
+## Site 3: Cropton
+
+genotypes_file <- here("data/genotypes", "site_3_hap.str")
+nests_file <- here("data/metadata", "nest_nums_3.txt")
+population_number <- 3
+population_id <- "CF"
+
+cropton <- make_merged_fst_dist_df(nest_locs_file, id_to_nest_file, genotypes_file, nests_file, population_number, population_id)
+cropton_df <- cropton$df
+cropton_mantel <- cropton$mantel_results
+
+## Site 4: Feshiebridge
+
+genotypes_file <- here("data/genotypes", "site_4_hap.str")
+nests_file <- here("data/metadata", "nest_nums_4.txt")
+population_number <- 4
+population_id <- "FB"
+
+feshiebridge <- make_merged_fst_dist_df(nest_locs_file, id_to_nest_file, genotypes_file, nests_file, population_number, population_id)
+feshiebridge_df <- feshiebridge$df
+feshiebridge_mantel <- feshiebridge$mantel_results
+
+## Site 6: Longshaw
+
+genotypes_file <- here("data/genotypes", "site_6_hap.str")
+nests_file <- here("data/metadata", "nest_nums_6.txt")
+population_number <- 6
+population_id <- "LS"
+
+longshaw <- make_merged_fst_dist_df(nest_locs_file, id_to_nest_file, genotypes_file, nests_file, population_number, population_id)
+longshaw_df <- longshaw$df
+longshaw_mantel <- longshaw$mantel_results
+
+## Site 7: Abernethy
+
+genotypes_file <- here("data/genotypes", "site_7_hap.str")
+nests_file <- here("data/metadata", "nest_nums_7.txt")
+population_number <- 7
+population_id <- "AB"
+
+abernethy <- make_merged_fst_dist_df(nest_locs_file, id_to_nest_file, genotypes_file, nests_file, population_number, population_id)
+abernethy_df <- abernethy$df
+abernethy_mantel <- abernethy$mantel_results
+
+merged_df <- rbind(cropton_df, feshiebridge_df, longshaw_df, abernethy_df) %>%
+  left_join(sites_unique, by = c("site" = "pop"))
+
+## Combined scatter plot of site-wise linear Fst vs. distances
+
+p2 <- ggplot(data = merged_df, aes(y = linear_fst, x = dist, shape = factor(site.y))) +
+  geom_point() +
+  theme_minimal(base_size=10) +
+  theme(plot.title=element_text(size=10, hjust=0.5), 
+        legend.position="right", 
+        axis.title.x = element_text(vjust=-0.5), 
+        axis.title.y = element_text(vjust=0.5),
+        plot.margin = margin(5, 5, 2.5, 5, unit = "mm")) +
+  labs(
+    y = "Linearised Fst (Fst / 1 - Fst)",
+    x = "Distance (km)"
+  )  +
+  scale_shape_discrete(name = "Site") +
+  xlim(0, 1.5) + ylim(0, 1)
+
+## Merge plots and save
+
+p <- plot_grid(p1, p2, ncol = 2, labels = c("A", "B"), label_size = 12, rel_widths = c(1, 1.25))
+ggsave(here("figures", "figure_4_distance_Fst_scatter_plots.tiff"), dpi=800, height=80, width=165, units="mm", bg="white", plot=p)
+ggsave(here("figures", "figure_4_distance_Fst_scatter_plots.png"), dpi=800, height=80, width=165, units="mm", bg="white", plot=p)
+p
+
+## Table of all Mantel test results
+
+mantel_results <- rbind(all_mantel, cropton_mantel, feshiebridge_mantel, longshaw_mantel, abernethy_mantel)
+
+colnames(mantel_results) <- c("Site ID", "R statistic", "P value", "n")
+rownames(mantel_results) <- NULL
+
+mantel_results %>%
+  write.csv(here("tables", "mantel_test_results.csv"), row.names = FALSE)
+
+mantel_results %>%
+  kbl(caption="Mantel test results", format = "html", table.attr = "style='width:75%;'") %>%
+  kable_styling(position = "left")
+```
+
+### Table 3: AMOVA results
+
+```{r message=FALSE, warning=FALSE, results="hide"}
+## Read in microsatellite data again and filter
+
+df <- read_tsv(here("data/genotypes", "merged_loci_r_haploid_only.str"), col_names = TRUE)
+df[, 3:23] <- lapply(df[, 3:23], function(x) as.numeric(x) + 100)
+pop <- df$pop
+ind_names <- df$ind
+df <- df %>% dplyr::select(-pop, -ind)
+rownames(df) <- ind_names
+ant_gen <- df2genind(df, ploidy=1, sep="", pop=pop)
+
+ant_gen = missingno(ant_gen, type = "loci", cutoff = 0.25)
+ant_gen = missingno(ant_gen, type = "geno", cutoff = 0.25)
+
+mlg <- mlg(ant_gen)
+
+dups_ant = mlg.id(ant_gen)
+ant_dups <- c()
+for (i in dups_ant){
+  if (length(dups_ant[i]) > 1){
+    print(i)
+    ant_dups <- c(ant_dups, i[1:length(i)-1])
+  }
+}
+
+ant_nodups = indNames(ant_gen)[! indNames(ant_gen) %in% ant_dups]
+ant_gen = ant_gen[ant_nodups, ]
+
+## Merge in nest IDs and create nest ID vector
+
+ant_ids <- rownames(ant_gen$tab)
+id_to_nest <- read_tsv(here("data/metadata", "id_to_nest.txt"), col_names = c("id", "nest"))
+nests <- id_to_nest %>%
+  filter(id %in% ant_ids)
+rownames(nests) <- nests$id
+nests <- nests[ant_ids,]
+nest_vec <- nests$nest
+
+## Merge in site IDs and create site ID vector
+
+pops <- data.frame(id = rownames(ant_gen$tab), pop = ant_gen$pop)
+pops$pop <- as.numeric(as.character(pops$pop))
+sites <- read_delim(here("data/metadata", "site_nums.txt"), col_names = c("number", "site", "name"), delim="\t")
+sites <- pops %>%
+  left_join(sites, b=c(pop = "number"))
+rownames(sites) <- sites$id
+sites <- sites[ant_ids,]
+sites_copy = sites
+site_vec = sites$site
+
+## Add these to genInd object and then set as strata
+
+ant_gen@other$site <- site_vec
+ant_gen@other$nest <- nest_vec
+strata_df <- data.frame(other(ant_gen))
+strata(ant_gen) <- strata_df
+
+## Run the AMOVA
+
+amova_result <- poppr.amova(ant_gen, hier = ~site/nest, nperm=999)
+
+amova_df <- data.frame("Source of variation"=c(),
+                       "Df"=c(),
+                       "Sum Sq"=c(),
+                       "Mean Sq"=c(),
+                       "Variance component"=c(),
+                       "Total variance"=c(),
+                       "p-value"=c())
+
+## Significance testing of AMOVA results
+
+set.seed(1999)
+amova_signif   <- randtest(amova_result, nrepet = 999)
+plot(amova_signif)
+```
+
+
+```{r message=FALSE, warning=FALSE}
+## Table of AMOVA results
+
+sources <- c("Between sites",
+             "Between nests within sites",
+             "Within host nests")
+
+amova_df <- cbind(sources,
+                  data.frame(amova_result$results)[1:3,],
+                  data.frame(amova_result$componentsofcovariance)[1:3,],
+                  amova_signif$pvalue)
+
+colnames(amova_df) <- c("Source of variation",
+                        "Df",
+                        "Sum Sq",
+                        "Mean Sq",
+                        "Variance component",
+                        "Total variance",
+                        "p-value")
+
+rownames(amova_df) <- NULL
+
+amova_df %>%
+  write.csv(here("tables", "table_3_amova_results.csv"), row.names = FALSE)
+
+amova_df %>%
+  kbl(caption="<strong>Table 3:</strong> AMOVA results", format = "html", table.attr = "style='width:100%;'", escape = FALSE) %>%
+  kable_styling(position = "left")
+```
+
+### Mitochondrial haplotypes
+
+### Figure 5: Haplotype map and haplotype network
+
+To visualize relationships between mtDNA haplotypes, a haplotype network was constructed using our new data and the eight additional mtDNA sequences available in the BOLD database (two from Finland, two from Switzerland, three from Spain and one from Norway). Sequences were aligned using MUSCLE (version 5.2.osxarm64, and the haplotype network was constructed using POPART (version 1.7) with the TCS network type.
+
+```{r message=FALSE, warning=FALSE, fig.width = 12, fig.height = 6, fig.cap = "**Fig. 5**: Haplotype map and haplotype network."}
+## Read and process the haplotype data
+
+haplotypes <- read_table(here("data/haplotypes", "haplotypes.tsv"), col_names = TRUE) %>%
+  mutate(site = str_extract(nest, "\\b[A-Z]{2}")) %>%
+  left_join(., sites_unique, by = c("site" = "site")) %>%
+  group_by(site) %>%
+  summarise(across(starts_with("HAP"), sum)) %>%
+  ungroup()
+
+## Read and join latitude and longitude information
+
+## Note that the approx_lats_lons have been nudged to allow the pie charts to
+## be placed on the map figure better and these are not geographically accurate!
+
+approx_lats_lons <- read_csv(here("data/metadata", "approx_lats_lons.csv"), col_names = TRUE) %>%
+  left_join(., sites_unique, by = c("num" = "pop")) %>%
+  select(site, lon, lat)
+
+haplotypes <- haplotypes %>%
+  left_join(approx_lats_lons, by = "site") %>%
+  mutate(rad = 0.35) %>%            # radius for pie placement
+  mutate(n = rowSums(across(starts_with("HAP"))))
+
+## Define the color palette for the haplotypes
+
+n <- 6
+cols <- brewer.pal(n, "Set2")
+names(cols) <- sprintf("HAP%1d", 1:n)
+
+## Create a nested data frame for the pie charts with computed angles.
+## Note: The computed pie chart data use the haplotype coordinates as given.
+
+pie.list <- haplotypes %>%
+  pivot_longer(cols = starts_with("HAP"), names_to = "type", values_to = "value") %>%
+  group_by(site, lon, lat, rad) %>%
+  mutate(total = sum(value),
+         prop = value / total,
+         end = 2 * pi * cumsum(prop),
+         start = lag(end, default = 0)) %>%
+  ungroup() %>%
+  group_by(site, lon, lat, rad) %>%
+  nest(data = c(type, value, prop, start, end)) %>%
+  mutate(
+    pie.grob = map(data, ~ {
+      p_temp <- ggplot(.) +
+        geom_arc_bar(aes(x0 = 0, y0 = 0, r0 = 0, r = 1,
+                         start = start, end = end, fill = type),
+                     color = "black", size = 0.3) +
+        scale_fill_manual(values = cols) +
+        coord_fixed() +
+        theme_void() +
+        theme(legend.position = "none")
+      ggplotGrob(p_temp)
+    }),
+    subgrob = pmap(list(pie.grob, rad, lon, lat),
+                   function(pg, r, lon, lat) {
+                       annotation_custom(grob = pg,
+                                           xmin = lat - r, xmax = lat + r,
+                                           ymin = lon - r, ymax = lon + r)
+                   }
+  )) %>%
+  ungroup()
+
+# min_x <- min(haplotypes$lat) - margin
+# max_x <- max(haplotypes$lat) + margin
+# min_y <- min(haplotypes$lon) - margin
+# max_y <- max(haplotypes$lon) + margin
+
+min_x = -7
+max_x = 2
+min_y = 53
+max_y = 58
+
+## Get world map data (world map is standard: x = long, y = lat)
+
+world <- map_data("world", resolution = 0)
+
+## Build the base map
+
+map <- ggplot(data = world, aes(x = long,
+                                y = lat,
+                                group = group)) +
+  geom_polygon(fill = "darkseagreen", color = "black", size=0.35) +
+  coord_quickmap(xlim = c(min_x, max_x), ylim = c(min_y, max_y)) +
+  xlab("Latitude") +
+  ylab("Longitude") +
+  theme(panel.background = element_rect(fill = "lightsteelblue2"),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(colour = "grey90", size = 0.5),
+        axis.title.x = element_text(vjust=-0.5, size=10), 
+        axis.title.y = element_text(vjust=0.5, size=10))
+
+## Add a tiny tile layer so that the haplotype legend appears
+
+map <- map +
+  geom_tile(data = haplotypes %>%
+              pivot_longer(cols = starts_with("HAP"), names_to = "type", values_to = "value"),
+            aes(x = lat,
+                y = lon,
+                fill = type),
+            color = "black", width = 0.01, height = 0.01, inherit.aes = FALSE) +
+  scale_fill_manual(values = cols, name = "Haplotype")
+
+## Overlay each pie chart grob on the map using the annotations
+
+for (sg in pie.list$subgrob) {
+  map <- map + sg
+}
+
+## Add labels for total counts per site
+
+map <- map +
+  geom_label_repel(data = haplotypes,
+                   aes(label = paste("N=", n, sep = ""),
+                       x = lat,
+                       y = lon),
+                   nudge_y = 0, inherit.aes = FALSE, size = 2.75,
+                   min.segment.length = 5, force = 0.75)
+
+p1 <- map + 
+  theme(
+    legend.position = c(0.815, 0.715),
+    legend.background = element_rect(fill = alpha("white", 1.0), color = "black", size=0.35),
+    legend.key.size = unit(0.3, "cm"),
+    legend.text = element_text(size = 8),
+    legend.title = element_text(size = 8),
+    plot.margin = margin(5, 5, 2.5, 5, unit = "mm")
+  )
+
+## Read in SVG of haplotype network
+
+p2 <- ggdraw() +
+  draw_image(here("data/haplotypes", "haplotype-network-reformatted.svg"), x = 0, y = 0, width = 1, height = 1) +
+  theme(plot.margin = margin(5, 5, 2.5, 5, unit = "mm"))
+
+## Merge the plots and save
+
+p <- plot_grid(p1, p2, ncol = 2, labels = c("A", "B"), label_size = 12, rel_widths = c(1, 1))
+ggsave(here("figures", "figure_5_haplotype_map_network.tiff"), dpi=800, height=80, width=165, units="mm", bg="white", plot=p)
+ggsave(here("figures", "figure_5_haplotype_map_network.png"), dpi=800, height=80, width=165, units="mm", bg="white", plot=p)
+p
+
+haplotypes <- haplotypes %>%
+  left_join(., sites[3:4], by=c("site" = "site")) %>%
+  select(name, starts_with("HAP")) %>%
+  distinct() %>%
+  rename(Site = name)
+
+haplotypes %>%
+  write.csv(here("tables", "table_4_mitochondrial_haplotypes.csv"), row.names=FALSE)
+
+haplotypes %>%
+  kbl(caption="<strong>Table 4:</strong> Mitochondrial haplotypes", format = "html", table.attr = "style='width:50%;'", escape = FALSE) %>%
+  kable_styling(position = "left")
+```
+
+## Supplementary figures
+
+## Figure S1: Between-site Fst and distance matrices
+
+```{r message=FALSE, warning=FALSE, results="hide", fig.width = 12, fig.height = 6, fig.cap = "**Fig. S1**: Between-site Fst and distance matrices."}
+## General functions for matrices
+
+## Get lower triangle of a correlation matrix
+get_lower_tri<-function(cormat){
+  cormat[upper.tri(cormat)] <- NA
+  return(cormat)
+}
+
+## Get upper triangle of a correlation matrix
+get_upper_tri <- function(cormat){
+  cormat[lower.tri(cormat)]<- NA
+  return(cormat)
+}
+
+## Reorder the matrix with hierarchical clustering
+reorder_cormat <- function(cormat){
+  dd <- as.dist(cormat)
+  hc <- hclust(dd)
+  cormat <-cormat[hc$order, hc$order]
+  return(cormat)
+}
+
+## Calculate all sites Fst matrix
+
+ant_fst = genet.dist(ant_gen, method = "WC84", diploid=FALSE) %>% round(digits = 3)
+fst_mat = as.matrix(ant_fst)
+
+labels = sites_unique[rownames(fst_mat),]$site
+rownames(fst_mat) <- labels
+colnames(fst_mat) <- labels
+  
+## Melt the correlation matrix
+
+upper_tri <- get_upper_tri(reorder_cormat(fst_mat))
+melted_cormat <- melt(upper_tri, na.rm = TRUE)
+
+## Plot heatmap
+
+p1 <- ggplot(data = melted_cormat, aes(Var2, Var1, fill = value))+
+  geom_tile(color = "white")+
+  scale_fill_gradient2(low = "#8D5B9B", high = "#fff4f1", mid = "#f786b6", 
+                       midpoint = median(melted_cormat$value), 
+                       limit = c(min(melted_cormat$value), max(melted_cormat$value)), 
+                       space = "Lab", 
+                       name=expression(F[ST])) +
+  theme_minimal(base_size=10)+ 
+  theme(axis.text.x = element_text(size = 8)) +
+  theme(axis.text.y = element_text(size = 8)) +
+  theme(axis.title.x = element_blank(), axis.title.y = element_blank()) +
+  theme(plot.margin = margin(0, 2.5, 0, 2.5, unit = "mm")) +
+  coord_fixed()
+
+p1 <- p1 + geom_text(aes(Var2, Var1, label = value), color = "black", size = 2)
+
+## Calculate all sites distance matrix
+
+lats_lons = read_csv(here("data/metadata", "site_lats_lons.csv"), col_names=TRUE)
+dist_mat <- distm(lats_lons[4:5], fun = distGeo) / 1000
+
+dist_mat = as.matrix(dist_mat)
+
+labels = lats_lons$site
+rownames(dist_mat) <- labels
+colnames(dist_mat) <- labels
+
+dist_mat <- dist_mat[rownames(upper_tri), rownames(upper_tri)]
+
+## Melt the distance matrix
+
+upper_tri <- get_upper_tri(dist_mat)
+melted_distmat <- melt(upper_tri, na.rm = TRUE)
+
+## Plot heatmap
+
+p2 <- ggplot(data = melted_distmat, aes(Var2, Var1, fill = value))+
+  geom_tile(color = "white")+
+  scale_fill_gradient2(low = "#8D5B9B", high = "#fff4f1", mid = "#f786b6", 
+                       midpoint = max(melted_distmat$value)/2, 
+                       limit = c(min(melted_distmat$value), max(melted_distmat$value)),
+                       space = "Lab", 
+                       name="Dist. (km)") +
+  theme_minimal(base_size=10)+ 
+  theme(axis.text.x = element_text(size = 8)) +
+  theme(axis.text.y = element_text(size = 8)) +
+  theme(axis.title.x = element_blank(), axis.title.y = element_blank()) +
+  theme(plot.margin = margin(0, 2.5, 0, 2.5, unit = "mm")) +
+  coord_fixed()
+
+p2 <- p2 + geom_text(aes(Var2, Var1, label = round(value)), color = "black", size = 2)
+
+## Merge heatmaps and save
+
+p <- plot_grid(p1, p2, ncol = 2, labels = c("A", "B"), label_size = 12, rel_widths = c(1, 1.04))
+ggsave(here("figures", "figure_S1_sites_Fst_distance_matrix.tiff"), dpi=800, height=80, width=165, units="mm", bg="white", plot=p)
+ggsave(here("figures", "figure_S1_sites_Fst_distance_matrix.png"), dpi=800, height=80, width=165, units="mm", bg="white", plot=p)
+p
+```
+
+## Figure S2: Per-site Fst and distance matrices
+
+```{r message=FALSE, warning=FALSE, results="hide", fig.width = 12, fig.height = 6*6, fig.cap = "**Fig. S2**: Per-site Fst and distance matrices."}
+
+## Take a genotypes file and nest data, returns the heatmap
+build_fst_plot <- function(genotypes_file, nests_file, min_val, max_val){
+  ## Read in the genotype data
+  df <- read_tsv(genotypes_file, col_names = TRUE)
+  pop <- df$pop
+  ind_names <- df$ind
+  df <- df %>% dplyr::select(-pop, -ind)
+  rownames(df) <- ind_names
+  ant_gen <- df2genind(df, ploidy=1, sep="", pop=pop)
+  
+  ## Filter data
+  ant_gen = missingno(ant_gen, type = "loci", cutoff = 0.5)
+  ant_gen = missingno(ant_gen, type = "geno", cutoff = 0.5)
+  
+  ## Calculate the Fst matrix
+  ant_fst = genet.dist(ant_gen, method = "WC84", diploid=FALSE) %>% round(digits = 3)
+  fst_mat = as.matrix(ant_fst)
+  fst_mat[fst_mat < 0 | is.na(fst_mat)] <- 0
+  
+  ## Read in the nest data, merge with Fst matrix
+  nest_nums <- read_tsv(nests_file, col_names=c("num", "id"))
+  rownames(nest_nums) <- nest_nums$num
+  labels <- as.character(rownames(fst_mat))
+  rownames(fst_mat) <- nest_nums[labels,]$id
+  colnames(fst_mat) <- nest_nums[labels,]$id
+  
+  ## Melt the correlation matrix
+  upper_tri <- get_upper_tri(reorder_cormat(fst_mat))
+  row_order <- rownames(upper_tri)
+  melted_cormat <- melt(upper_tri, na.rm = TRUE)
+  
+  ## Build the heatmap
+  hm <- ggplot(data = melted_cormat, aes(Var2, Var1, fill = value))+
+    geom_tile(color = "white")+
+    scale_fill_gradient2(low = "#8D5B9B", high = "#fff4f1", mid = "#f786b6", 
+                         midpoint = min_val + ((max_val - min_val) / 2), 
+                         limit = c(min_val, max_val), 
+                         space = "Lab", 
+                         name=expression(F[ST])) +
+    theme_minimal(base_size=6)+ 
+    theme(axis.text.x = element_text(size = 6)) +
+    theme(axis.text.y = element_text(size = 6)) +
+    theme(axis.title.x = element_blank(), axis.title.y = element_blank()) +
+    theme(plot.margin = margin(0, 2.5, 0, 2.5, unit = "mm")) +
+    coord_fixed()
+  
+  hm <- hm + geom_text(aes(Var2, Var1, label = round(value, 3)), color = "black", size = 2)
+  return(list(heatmap=hm, row_order=row_order))
+}
+
+## Takes a nest locations file, set of nests, and a population, returns a heatmap
+build_dist_plot <- function(nest_locs_file, nests_file, population_number, row_order, min_val, max_val){
+  ## Read in the nest numbers and locations
+  nest_nums <- read_tsv(nests_file, col_names=c("num", "id"))
+  nest_lats_lons <- read_tsv(nest_locs_file, col_names=TRUE)
+  
+  ## Filter to nests in this population
+  lats_lons <- nest_lats_lons %>%
+    filter(pop == population_number & nest %in% nest_nums$id)
+  
+  ## Calculate the distance matrix
+  dist_mat <- distm(lats_lons[4:3], fun = distGeo)
+  dist_mat = as.matrix(dist_mat)
+  
+  labels = lats_lons$nest
+  rownames(dist_mat) <- labels
+  colnames(dist_mat) <- labels
+  
+  ## Reorder and convert from metres to km
+  dist_mat <- dist_mat[row_order, row_order] / 1000
+  
+  ## Melt the correlation matrix
+  upper_tri <- get_upper_tri(dist_mat)
+  melted_cormat <- melt(upper_tri, na.rm = TRUE)
+  
+  ## Build the heatmap
+  hm <- ggplot(data = melted_cormat, aes(Var2, Var1, fill = value))+
+    geom_tile(color = "white")+
+    scale_fill_gradient2(low = "#8D5B9B", high = "#fff4f1", mid = "#f786b6", 
+                         midpoint = min_val + ((max_val - min_val) / 2), 
+                         limit = c(min_val, max_val), 
+                         space = "Lab", 
+                         name="Dist. (km)") +
+    theme_minimal(base_size=6)+ 
+    theme(axis.text.x = element_text(size = 6)) +
+    theme(axis.text.y = element_text(size = 6)) +
+    theme(axis.title.x = element_blank(), axis.title.y = element_blank()) +
+    theme(plot.margin = margin(0, 2.5, 0, 2.5, unit = "mm")) +
+    coord_fixed()
+  
+  hm <- hm + geom_text(aes(Var2, Var1, label = round(value, 3)), color = "black", size = 2)
+  return(hm)
+}
+
+## Define variables used for all heatmaps
+
+nest_locs_file <- here("data/metadata", "nest_lats_lons.tsv")
+
+min_fst <- 0
+max_fst <- 0.5
+
+min_dist <- 0
+max_dist <- 2.5
+
+## Site 1: Aviemore
+
+genotypes_file <- here("data/genotypes", "site_1_hap.str")
+nests_file <- here("data/metadata", "nest_nums_1.txt")
+
+fst <- build_fst_plot(genotypes_file, nests_file, min_fst, max_fst)
+fst_hm <- fst$heatmap
+row_order <- fst$row_order
+
+dist_hm <- build_dist_plot(nest_locs_file, nests_file, 1, row_order, min_dist, max_dist)
+
+aviemore <- plot_grid(fst_hm, dist_hm, ncol = 2, labels = c("A", "B"), label_size = 12, rel_widths = c(1, 1.04))
+
+## Site 2: Broxa
+
+genotypes_file <- here("data/genotypes", "site_2_hap.str")
+nests_file <- here("data", "metadata/nest_nums_2.txt")
+
+fst <- build_fst_plot(genotypes_file, nests_file, min_fst, max_fst)
+fst_hm <- fst$heatmap
+row_order <- fst$row_order
+
+dist_hm <- build_dist_plot(nest_locs_file, nests_file, 2, row_order, min_dist, max_dist)
+
+broxa <- plot_grid(fst_hm, dist_hm, ncol = 2, labels = c("C", "D"), label_size = 12, rel_widths = c(1, 1.04))
+
+## Site 3: Cropton Forest
+
+genotypes_file <- here("data/genotypes", "site_3_hap.str")
+nests_file <- here("data/metadata", "nest_nums_3.txt")
+
+fst <- build_fst_plot(genotypes_file, nests_file, min_fst, max_fst)
+fst_hm <- fst$heatmap
+row_order <- fst$row_order
+
+dist_hm <- build_dist_plot(nest_locs_file, nests_file, 3, row_order, min_dist, max_dist)
+
+cropton_forest <- plot_grid(fst_hm, dist_hm, ncol = 2, labels = c("E", "F"), label_size = 12, rel_widths = c(1, 1.04))
+
+## Site 4: Feshiebridge
+
+genotypes_file <- here("data/genotypes", "site_4_hap.str")
+nests_file <- here("data/metadata", "nest_nums_4.txt")
+
+fst <- build_fst_plot(genotypes_file, nests_file, min_fst, max_fst)
+fst_hm <- fst$heatmap
+row_order <- fst$row_order
+
+dist_hm <- build_dist_plot(nest_locs_file, nests_file, 4, row_order, min_dist, max_dist)
+
+feshiebridge <- plot_grid(fst_hm, dist_hm, ncol = 2, labels = c("G", "H"), label_size = 12, rel_widths = c(1, 1.04))
+
+## Site 6: Longshaw
+
+genotypes_file <- here("data/genotypes", "site_6_hap.str")
+nests_file <- here("data/metadata", "nest_nums_6.txt")
+
+fst <- build_fst_plot(genotypes_file, nests_file, min_fst, max_fst)
+fst_hm <- fst$heatmap
+row_order <- fst$row_order
+
+dist_hm <- build_dist_plot(nest_locs_file, nests_file, 6, row_order, min_dist, max_dist)
+
+longshaw <- plot_grid(fst_hm, dist_hm, ncol = 2, labels = c("I", "J"), label_size = 12, rel_widths = c(1, 1.04))
+
+## Site 7: Abernethy
+
+genotypes_file <- here("data/genotypes", "site_7_hap.str")
+nests_file <- here("data/metadata", "nest_nums_7.txt")
+
+fst <- build_fst_plot(genotypes_file, nests_file, min_fst, max_fst)
+fst_hm <- fst$heatmap
+row_order <- fst$row_order
+
+dist_hm <- build_dist_plot(nest_locs_file, nests_file, 7, row_order, min_dist, max_dist)
+
+abernethy <- plot_grid(fst_hm, dist_hm, ncol = 2, labels = c("K", "L"), label_size = 12, rel_widths = c(1, 1.04))
+
+## Merge all the Fst/distance heatmaps together and save
+
+p <- plot_grid(aviemore,
+               broxa,
+               cropton_forest,
+               feshiebridge,
+               longshaw,
+               abernethy,
+               ncol = 1) +
+  theme(plot.margin = margin(2.5, 2.5, 2.5, 2.5, unit = "mm"))
+ggsave(here("figures", "figure_S2_nests_Fst_distance_matrix.tiff"), dpi=800, height=80*6, width=165, units="mm", bg="white", plot=p)
+ggsave(here("figures", "figure_S2_nests_Fst_distance_matrix.png"), dpi=800, height=80*6, width=165, units="mm", bg="white", plot=p)
+p
+```
+
+## Figure S3: Location maps for the sites
+
+```{r message=FALSE, warning=FALSE, results="hide", fig.width = 12, fig.height = 12*6, fig.cap = "**Fig. S3**: Location maps for the sites."}
+## Define variables used for all maps
+
+margin <- 0.002
+nest_locs_file <- here("data/metadata", "nest_lats_lons.tsv")
+
+## Takes a nest locations file and population number, returns a nest location map
+make_site_map <- function(nest_locs_file, population_number){
+  ## Read in nest locations data
+  lats_lons = read_tsv(nest_locs_file)
+  
+  ## Filter for population
+  lats_lons <- lats_lons %>%
+    filter(pop == population_number)
+  
+  ## Set map margins
+  min_x = min(lats_lons$lon) - margin
+  max_x = max(lats_lons$lon) + margin
+  min_y = min(lats_lons$lat) - margin
+  max_y = max(lats_lons$lat) + margin
+  
+  ## Plot map
+  world = map_data("world", resolution=0)
+  
+  map <- ggplot(data = world, aes(x = long,
+                                  y = lat)) +
+    geom_polygon(fill = "darkseagreen") +
+    coord_quickmap(xlim = c(min_x, max_x), ylim = c(min_y, max_y)) +
+    xlab("Latitude") +
+    ylab("Longitude") +
+    theme(panel.background = element_rect(fill = "lightsteelblue2"),
+          panel.grid.minor = element_blank(),
+          panel.grid.major = element_line(colour = "grey90", size = 0.5),
+          axis.title.x = element_text(vjust=-0.5, size=8), 
+          axis.title.y = element_text(vjust=0.5, size=8),
+          axis.text.x = element_text(size=7),
+          axis.text.y = element_text(size=7)) +
+    scale_x_continuous(labels = function(x) sprintf("%.4g", x))
+  
+  ## Add nest labels
+  map <- map + geom_point(data=lats_lons, aes(x=lon, y=lat)) +
+    geom_label_repel(data=lats_lons, aes(x=lon, y=lat, label=nest), size=2.5, min.segment.length=0)
+  
+  return(map)
+}
+
+## Site 1: Aviemore
+
+aviemore_map <- make_site_map(nest_locs_file, 1)
+
+## Site 2:
+
+broxa_map <- make_site_map(nest_locs_file, 2)
+
+## Site 3:
+
+cropton_forest_map <- make_site_map(nest_locs_file, 3)
+
+## Site 4:
+
+feshiebridge_map <- make_site_map(nest_locs_file, 4)
+
+## Site 6:
+
+longshaw_map <- make_site_map(nest_locs_file, 6)
+
+## Site 7:
+
+abernethy_map <- make_site_map(nest_locs_file, 7)
+
+## Merge all the maps and save
+
+p <- plot_grid(aviemore_map,
+               broxa_map,
+               cropton_forest_map,
+               feshiebridge_map,
+               longshaw_map,
+               abernethy_map,
+               ncol = 2,
+               labels = c("A", "B", "C", "D", "E", "F"),
+               label_size = 12) +
+  theme(plot.margin = margin(2.5, 2.5, 2.5, 2.5, unit = "mm"))
+ggsave(here("figures", "figure_S3_nest_location_maps.tiff"), dpi=800, height=80*3, width=165, units="mm", bg="white", plot=p)
+ggsave(here("figures", "figure_S3_nest_location_maps.png"), dpi=800, height=80*3, width=165, units="mm", bg="white", plot=p)
+p
+```
+
+## Figure S4: STRUCTURE ancestry plots
+
+Population structure analysis was performed using STRUCTURE with MAXPOPS=1, BURNIN=10000, NUMREPS=20000, and LOCPRIOR=1 (`mainparams` and `extraparams` files used are included in the GitHub repository) and values of K from 1 to 10. The Bash script below was used to test the range of values of K with a specific number of replicate runs.
+
+```bash
+#!/bin/bash
+
+# structure binary and mainparams and extraparams files should be in
+# the same directory as this script
+
+# Function to display usage information
+usage() {
+    echo "Usage: $0 -i <input_file> -o <output_directory> -k <value_k> -r <value_r>"
+    exit 1
+}
+
+# Parse named parameters using getopts
+while getopts ":i:o:k:r:" opt; do
+    case "${opt}" in
+        i)
+            input_file=${OPTARG}
+            ;;
+        o)
+            output_dir=${OPTARG}
+            ;;
+        k)
+            value_k=${OPTARG}
+            ;;
+        r)
+            value_r=${OPTARG}
+            ;;
+        *)
+            usage
+            ;;
+    esac
+done
+shift $((OPTIND - 1))
+
+# Validate that all parameters were provided
+if [ -z "${input_file}" ] || [ -z "${output_dir}" ] || [ -z "${value_k}" ] || [ -z "${value_r}" ]; then
+    usage
+fi
+
+# Create the output directory if it doesn't exist
+mkdir -p "${output_dir}"
+
+for (( k = 1; k <= value_k; k++ ))
+do
+    for (( r = 1; r <= value_r; r++ ))
+    do
+        ./structure -i "${input_file}" -o "${output_dir}/k${k}_${r}" -K "${k}" -m mainparams -e extraparams
+    done
+done
+```
+
+StructureSelector was used to estimate the optimal value/s of K from which to estimate the populations’ ancestry, using Evanno’s delta K method. For each value of K, 5 replicate STRUCTURE analyses were run, and the resulting ancestry proportions were averaged across each value of K using the CluMPAK online server.
+
+```{r message=FALSE, warning=FALSE, results="hide", fig.width = 12, fig.height = 8, fig.cap = "**Fig. S4**: STRUCTURE ancestry plots."}
+## Read in sites and STRUCTURE/CluMPAK results for K=2
+
+sites <- read_delim(here("data/metadata", "site_nums.txt"), col_names = c("number", "site", "name"), delim="\t")
+ancestry <- read.table(here("data/structure", "CluMPAK_K2.tsv"), header=FALSE)
+ancestry <- ancestry[,c(4, 6:7)]
+colnames(ancestry) <- c("pop", "C1", "C2")
+ancestry$id <- indNames(ant_gen)
+
+## Set up colours
+
+n <- 2
+colrs <- brewer.pal.info[brewer.pal.info$colorblind == TRUE, ]
+cols = brewer.pal(nPop(ant_gen), "Accent")
+cols = cols[1:n]
+names(cols) <- sprintf("C%01d", 1:length(cols))
+
+## Pivot data
+
+ancestry <- ancestry %>%
+  pivot_longer(
+    cols = c(C1, C2),
+    names_to = "cluster",
+    values_to = "ancestry"
+  )
+
+## Merge in site data
+
+ancestry <- ancestry %>%
+  left_join(sites, by=c("pop" = "number")) %>%
+  dplyr::select(-name)
+
+ancestry$site <- factor(ancestry$site, levels=c("AV", "FB", "AB", "LS", "CF", "BX", "GB"))
+
+## Plot
+
+p1 <- ggplot(ancestry, aes(fill=factor(cluster), y=ancestry, x=id)) +
+  geom_bar(position="stack", stat="identity", alpha=1.0, width=0.8) +
+  facet_grid(~site, scales="free_x", space = "free_x") +
+  theme_minimal(base_size=10) +
+  theme(axis.text.x = element_text(size=4, angle = 90, vjust = 0.55, margin=unit(c(-0.20,0,0,0), "cm")),
+        axis.title.x = element_text(margin=unit(c(0.25,0,0,0), "cm")),
+        strip.text.x = element_text(size=6, margin=margin(b=0, t=0)),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) +
+  theme(panel.spacing.x = unit(0.6, "lines"),
+        plot.margin = margin(5, 5, 5, 5, unit = "mm")) +
+  scale_fill_manual(values=cols, name="Cluster") +
+  xlab("ID") + ylab("Proportion of ancestry")
+
+## Read in sites and STRUCTURE/CluMPAK results for K=5
+
+ancestry <- read.table(here("data/structure", "CluMPAK_K5.tsv"), header=FALSE)
+ancestry <- ancestry[,c(4, 6:10)]
+colnames(ancestry) <- c("pop", "C1", "C2", "C3", "C4", "C5")
+ancestry$id <- indNames(ant_gen)
+
+## Set up colours
+
+n <- 5
+colrs <- brewer.pal.info[brewer.pal.info$colorblind == TRUE, ]
+cols = brewer.pal(nPop(ant_gen), "Accent")
+cols = cols[1:n]
+names(cols) <- sprintf("C%01d", 1:length(cols))
+
+## Pivot data
+
+ancestry <- ancestry %>%
+  pivot_longer(
+    cols = c(C1, C2, C3, C4, C5),
+    names_to = "cluster",
+    values_to = "ancestry"
+  )
+
+## Merge in site data
+
+ancestry <- ancestry %>%
+  left_join(sites, by=c("pop" = "number")) %>%
+  dplyr::select(-name)
+
+ancestry$site <- factor(ancestry$site, levels=c("AV", "FB", "AB", "LS", "CF", "BX", "GB"))
+
+## Plot the ancestries and save
+
+p2 <- ggplot(ancestry, aes(fill=factor(cluster), y=ancestry, x=id)) +
+  geom_bar(position="stack", stat="identity", alpha=1.0, width=0.8) +
+  facet_grid(~site, scales="free_x", space = "free_x") +
+  theme_minimal(base_size=10) +
+  theme(axis.text.x = element_text(size=4, angle = 90, vjust = 0.55, margin=unit(c(-0.20,0,0,0), "cm")),
+        axis.title.x = element_text(margin=unit(c(0.25,0,0,0), "cm")),
+        strip.text.x = element_text(size=6, margin=margin(b=0, t=0)),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) +
+  theme(panel.spacing.x = unit(0.6, "lines"),
+        plot.margin = margin(5, 5, 5, 5, unit = "mm")) +
+  scale_fill_manual(values=cols, name="Cluster") +
+  xlab("ID") + ylab("Proportion of ancestry")
+
+p <- plot_grid(p1, p2, ncol = 1, labels = c("A", "B"), label_size = 12, rel_widths = c(1, 1))
+ggsave(here("figures", "figure_S4_STRUCTURE_plots.tiff"), dpi=800, height=120, width=165, units="mm", bg="white", plot=p)
+ggsave(here("figures", "figure_S4_STRUCTURE_plots.png"), dpi=800, height=120, width=165, units="mm", bg="white", plot=p)
+p
+```
+
+## Table S1: SPAGeDi gene diversity (He) values
+
+This is a table of the gene diversity results from the SPAGeDi output calculated in the Table S2 section below.
+
+```{r}
+gene_diversity <- read.table(
+  here("data/spagedi", "spagedi_output.txt"), skip = 24, nrows = 8, sep = "\t", header = FALSE, fill = TRUE) %>%
+  select(2,3,10)
+
+colnames(gene_diversity) <- c("Site", "Sample size", "He")
+gene_diversity$Site[gene_diversity$Site == "All categories confounded"] <- "All sites"
+num_idx <- suppressWarnings(!is.na(as.numeric(gene_diversity$Site)))
+gene_diversity$Site[num_idx] <- sites$name[ match(as.numeric(gene_diversity$Site[num_idx]), sites$number) ]
+
+gene_diversity <- gene_diversity %>%
+    mutate(Site = factor(Site, levels = c(sort(unique(Site[Site != "All sites"])), "All sites"))) %>%
+  arrange(Site)
+
+gene_diversity %>%
+  write.csv(here("tables", "table_S1_spagedi_gene_diversity.csv"), row.names = FALSE)
+
+gene_diversity %>%
+  kbl(caption="<strong>Table S1:</strong> Gene diversity values from SPAGeDi", format = "html", table.attr = "style='width:50%;'", escape = FALSE) %>%
+  kable_styling(position = "left")
+```
+
+## Table S2: SPAGeDi kinship values
+
+Spatial analysis was performed using SPAGeDi 1.5d 2017 (Hardy and Vekemans 2002) to calculate the overall and site-level gene diversity corrected for sample size (He) (Nei 1978) and to estimate kinship and its relationship with spatial distribution of samples. The Loiselle kinship estimator (Loiselle et al. 1995) is used, because it is suitable for haploid data and is robust to the presence of low frequency alleles. SPAGeDi was run using the ‘pairwise’, ‘within pairs’, and ‘whole sample reference allele frequencies’ options.
+
+```{r message=FALSE, warning=FALSE}
+## Create genambig object from ant genotype data
+
+genambig_obj <- as.genambig(ant_gen)
+
+n_samp <- nInd(ant_gen)
+ploidy_vector <- rep(1, n_samp)
+Ploidies(genambig_obj) <- ploidy_vector
+PopInfo(genambig_obj) <- as.integer(pop(ant_gen))
+PopNames(genambig_obj) <- levels(pop(ant_gen))
+Usatnts(genambig_obj) <- rep(2, nLoc(ant_gen))
+
+## Merge in nest location data
+
+nest_locs_file <- here("data/metadata", "nest_lats_lons.tsv")
+nest_lats_lons <- read_tsv(nest_locs_file)
+
+ids_lats_lons <- id_to_nest %>%
+  left_join(nest_lats_lons, by=c("nest" = "nest"))
+
+rownames(ids_lats_lons) <- ids_lats_lons$id
+
+## Convert lats/lons to metre coordinates that will work better with SPAGeDi
+
+coords <- ids_lats_lons[Samples(genambig_obj),] %>%
+  select(X=lon, Y=lat)
+
+## 4326 is the code for the WGS84 coordinate system, which uses latitude and longitude in degrees
+
+coords_sf <- st_as_sf(coords, coords = c("X", "Y"), crs = 4326)
+
+## Transform to UK UTM zone and convert to metres
+
+coords_sf_proj <- st_transform(coords_sf, crs = 27700)
+coords_metres <- st_coordinates(coords_sf_proj)
+  
+rownames(coords_metres) <- Samples(genambig_obj)
+
+## Write to a SPAGeDi format file
+
+write.SPAGeDi(
+  object   = genambig_obj,
+  file     = here("data/spagedi", "spagedi_input.txt"),
+  allelesep= "",
+  digits   = 3,
+  spatcoord = coords_metres
+)
+
+## Read in SPAGeDi output
+
+## Kinship values
+kinship <- read.table(here("data/spagedi", "spagedi_output.txt"), skip = 126, header = FALSE, sep = "\t")
+kinship <- kinship[!apply(kinship, 1, function(row) {
+  all(is.na(row) | trimws(as.character(row)) == "")
+}), ]
+kinship <- kinship[, colSums(is.na(kinship) | kinship == "") != nrow(kinship)]
+kinship <- kinship %>%
+  select(-4)
+colnames(kinship) <- c("Locus",
+                       "Pairwise kinship within host nests",
+                       "Pairwise kinship between host nests within sites",
+                       "Slope kinship against linear distance",
+                       "Slope kinship against log distance")
+
+kinship %>%
+  write.csv(here("tables", "table_S2_spagedi_kinship.csv"), row.names = FALSE)
+
+kinship %>%
+  kbl(caption="<strong>Table S2:</strong> Kinship results from SPAGeDi", format = "html", table.attr = "style='width:75%;'", escape = FALSE) %>%
+  kable_styling(position = "left")
+```

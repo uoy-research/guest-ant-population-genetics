@@ -1,8 +1,8 @@
-num,loc,lon,lat
-4,Feshiebridge,57,-4.25
-7,Abernethy,57.286911,-2.703095
-1,Aviemore,57.22,-3.55
-2,Broxa Forest,54.336559,-0.4
-3,Cropton Forest,54.337566,-1.25
-6,Longshaw Estate,53.316586,-1.602255
-5,Gaitbarrows,54.184500,-2.799627
+num,site,name,lon,lat
+1,AV,Aviemore,-3.810674325,57.209089
+2,BX,Broxa Forest,-0.550836,54.330313333333336
+3,CF,Cropton Forest,0.83082575,54.3261665
+4,FB,Feshiebridge,-3.8977603714285713,57.119587714285714
+5,GB,Gaitbarrows,2.274528,54.189722
+6,LS,Longshaw Estate,1.6117615,53.3085095
+7,AB,Abernethy,-3.7110441,57.22539583333334

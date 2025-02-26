@@ -4,7 +4,7 @@ SPAGeDi 1.5d (build 02-06-2017) - a program for Spatial Pattern Analysis of Gene
                Contributions by Reed Cartwright
 
 Input file : "./spagedi_input.txt"
-Results file : "spagedi_output.txt"
+Results file : "spagedi_output"
 77 individuals
 7 categories: 1, 4, 6, 7, 3, 2, 5
 2 spatial coordinates, X, Y
