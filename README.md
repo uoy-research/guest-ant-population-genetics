@@ -1,6 +1,8 @@
 # Guest ant population genetics analysis
 
-Code, data, and figures from a study of guest ant (_Formicoxenus nitidulus_) population genetics.
+Code, data, and figures from a study of guest ant (_Formicoxenus nitidulus_) population genetics across a range of sites in Northern England and Northern Scotland, from Robinson _et al_ 2025.
+
+The full code for analysing the data, and generating all of the figures and tables, can be found in the R Markdown document [guest_ant_population_genetics.Rmd](guest_ant_population_genetics.Rmd) and an HTML-rendered version of the code, figures, and tables can be found in [guest_ant_population_genetics.html](guest_ant_population_genetics.html)
 
 ## List of figures
 
