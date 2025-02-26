@@ -36,6 +36,7 @@ The full code for analysing the data, and generating all of the figures and tabl
 ### Other tables
 
 * [Mantel test results for Fst vs. distance association](tables/mantel_test_results.csv)
+* [Site-level M-ratio test results](tables/m_ratio_test_results.csv)
 
 ## Scripts
 
