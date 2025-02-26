@@ -1,7 +1,0 @@
-1	AV	Aviemore
-2	BX	Broxa Forest
-3	CF	Cropton Forest
-4	FB	Feshiebridge
-5	GB	Gaitbarrows
-6	LS	Longshaw Estate
-7	AB	Abernethy
