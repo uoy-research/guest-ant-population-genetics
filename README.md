@@ -15,9 +15,9 @@ Code, data, and figures from a study of guest ant (_Formicoxenus nitidulus_) pop
 ### Supplementary figures
 
 * [Figure S1: site-level pairwise Fst and distance matrices](figures/figure_S1_sites_Fst_distance_matrix.png)
-* [Figure S2](figures/figure_S2_nests_Fst_distance_matrix.png)
-* [Figure S3](figures/figure_S3_nest_location_maps.png)
-* [Figure S4](figures/figure_S4_STRUCTURE_plots.png)
+* [Figure S2: nest-level pairwise Fst and distance matrices](figures/figure_S2_nests_Fst_distance_matrix.png)
+* [Figure S3: nest location maps by site](figures/figure_S3_nest_location_maps.png)
+* [Figure S4: STRUCTURE ancestry plots](figures/figure_S4_STRUCTURE_plots.png)
 
 ## List of tables
 
