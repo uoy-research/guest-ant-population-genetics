@@ -28,7 +28,7 @@ The full code for analysing the data, and generating all of the figures and tabl
 * [Table 3: AMOVA results](tables/table_3_amova_results.csv)
 * [Table 4: mitochondrial haplotypes](tables/table_4_mitochondrial_haplotypes.csv)
 
-### Supplemtary tables
+### Supplementary tables
 
 * [Table S1: SPAGeDi gene diversity values](tables/table_S1_spagedi_gene_diversity.csv)
 * [Table S2: SPAGeDi kinship values](tables/table_S2_spagedi_kinship.csv)

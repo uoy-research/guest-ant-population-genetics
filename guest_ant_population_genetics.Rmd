@@ -626,7 +626,7 @@ for i in range(1, 8):
                     site_out.write("\t".join([parts[0], nest_num] + parts[2:]) + "\n")
 ```
 
-The main genoptypes object and the separate site-specific ones were used to create scatter plots of pairwise linearised Fst versus distance at the site level, and nest level.
+The main genoptypes object and the separate site-specific ones were used to create scatter plots of pairwise linearised Fst versus distance at the site level, and nest level (excluding Cropton Forest).
 
 ```{r message=FALSE, warning=FALSE, fig.width = 12, fig.height = 6, fig.cap = "**Fig. 4**: Pairwise linearised Fst vs. distance scatter plots."}
 ## Between-site linearised Fst vs. distance
@@ -777,17 +777,6 @@ make_merged_fst_dist_df <- function(nest_locs_file, id_to_nest_file, genotypes_f
   return(list(df=site_df, mantel_results=mantel_results))
 }
 
-## Site 3: Cropton
-
-genotypes_file <- here("data/genotypes", "site_3_hap.str")
-nests_file <- here("data/metadata", "nest_nums_3.txt")
-population_number <- 3
-population_id <- "CF"
-
-cropton <- make_merged_fst_dist_df(nest_locs_file, id_to_nest_file, genotypes_file, nests_file, population_number, population_id)
-cropton_df <- cropton$df
-cropton_mantel <- cropton$mantel_results
-
 ## Site 4: Feshiebridge
 
 genotypes_file <- here("data/genotypes", "site_4_hap.str")
@@ -821,7 +810,7 @@ abernethy <- make_merged_fst_dist_df(nest_locs_file, id_to_nest_file, genotypes_
 abernethy_df <- abernethy$df
 abernethy_mantel <- abernethy$mantel_results
 
-merged_df <- rbind(cropton_df, feshiebridge_df, longshaw_df, abernethy_df) %>%
+merged_df <- rbind(feshiebridge_df, longshaw_df, abernethy_df) %>%
   left_join(sites_unique, by = c("site" = "pop"))
 
 ## Combined scatter plot of site-wise linear Fst vs. distances
@@ -850,7 +839,7 @@ p
 
 ## Table of all Mantel test results
 
-mantel_results <- rbind(all_mantel, cropton_mantel, feshiebridge_mantel, longshaw_mantel, abernethy_mantel)
+mantel_results <- rbind(all_mantel, feshiebridge_mantel, longshaw_mantel, abernethy_mantel)
 
 colnames(mantel_results) <- c("Site ID", "R statistic", "P value", "n")
 rownames(mantel_results) <- NULL
@@ -1789,4 +1778,27 @@ kinship %>%
 kinship %>%
   kbl(caption="<strong>Table S2:</strong> Kinship results from SPAGeDi", format = "html", table.attr = "style='width:75%;'", escape = FALSE) %>%
   kable_styling(position = "left")
+```
+
+### Table of ant IDs and longitude/latitudes
+
+Write a table that has all of the ants, their site and nest information, and locations.
+
+```{r message=FALSE, warning=FALSE}
+## Merge ant IDs and locations with site IDs and names
+
+ids_lats_lons %>%
+  left_join(sites_ids_names, by=c("pop" = "pop")) %>%
+  left_join(host_species, by=c("nest" = "nest")) %>%
+  arrange(id) %>%
+  select(id, pop, site, name, nest, host, lon, lat) %>%
+  rename("Ant ID" = id,
+         "Population number" = pop,
+         "Site ID" = site,
+         "Site name" = name,
+         "Nest ID" = nest,
+         "Host species" = host,
+         "Longitude" = lon,
+         "Latitude" = lat) %>%
+  write_csv(here("tables", "ant_ids_and_locs.csv"))
 ```
