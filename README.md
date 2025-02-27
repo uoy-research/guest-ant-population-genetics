@@ -37,6 +37,7 @@ The full code for analysing the data, and generating all of the figures and tabl
 
 * [Mantel test results for Fst vs. distance association](tables/mantel_test_results.csv)
 * [Site-level M-ratio test results](tables/m_ratio_test_results.csv)
+* [Ant metadata (IDs, sites, nests, coordinates)](tables/ant_ids_and_locs.csv)
 
 ## Scripts
 
