@@ -32,12 +32,13 @@ The full code for analysing the data, and generating all of the figures and tabl
 
 * [Table S1: SPAGeDi gene diversity values](tables/table_S1_spagedi_gene_diversity.csv)
 * [Table S2: SPAGeDi kinship values](tables/table_S2_spagedi_kinship.csv)
+* [Table S3: Haplotype sequences metadata](tables/table_S3_haplotype_sequences_metadata.csv)
+* [Table S4: Ant metadata (IDs, sites, nests, coordinates)](tables/table_S4_ant_ids_and_locs.csv)
 
 ### Other tables
 
 * [Mantel test results for Fst vs. distance association](tables/mantel_test_results.csv)
 * [Site-level M-ratio test results](tables/m_ratio_test_results.csv)
-* [Ant metadata (IDs, sites, nests, coordinates)](tables/ant_ids_and_locs.csv)
 
 ## Scripts
 

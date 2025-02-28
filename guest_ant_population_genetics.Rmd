@@ -1052,8 +1052,8 @@ map <- ggplot(data = world, aes(x = long,
                                 group = group)) +
   geom_polygon(fill = "darkseagreen", color = "black", size=0.35) +
   coord_quickmap(xlim = c(min_x, max_x), ylim = c(min_y, max_y)) +
-  xlab("Latitude") +
-  ylab("Longitude") +
+  xlab("Longitude") +
+  ylab("Latitude") +
   theme(panel.background = element_rect(fill = "lightsteelblue2"),
         panel.grid.minor = element_blank(),
         panel.grid.major = element_line(colour = "grey90", size = 0.5),
@@ -1078,6 +1078,15 @@ for (sg in pie.list$subgrob) {
 }
 
 ## Add labels for total counts per site
+
+p_temp <- map + 
+  theme(
+    legend.position = "none",
+    plot.margin = margin(5, 5, 2.5, 5, unit = "mm")
+  )
+
+ggsave(here("figures", "haplotype_map_no_labels.tiff"), dpi=800, height=80, width=80, units="mm", bg="white", plot=p_temp)
+ggsave(here("figures", "haplotype_map_no_labels.png"), dpi=800, height=80, width=80, units="mm", bg="white", plot=p_temp)
 
 map <- map +
   geom_label_repel(data = haplotypes,
@@ -1458,8 +1467,8 @@ make_site_map <- function(nest_locs_file, population_number){
                                   y = lat)) +
     geom_polygon(fill = "darkseagreen") +
     coord_quickmap(xlim = c(min_x, max_x), ylim = c(min_y, max_y)) +
-    xlab("Latitude") +
-    ylab("Longitude") +
+    xlab("Longitude") +
+    ylab("Latitude") +
     theme(panel.background = element_rect(fill = "lightsteelblue2"),
           panel.grid.minor = element_blank(),
           panel.grid.major = element_line(colour = "grey90", size = 0.5),
@@ -1780,9 +1789,19 @@ kinship %>%
   kable_styling(position = "left")
 ```
 
-### Table of ant IDs and longitude/latitudes
+### Table S3: Haplotype sequences metadata
 
-Write a table that has all of the ants, their site and nest information, and locations.
+These are the mappings of the IDs used here on the haplotype network to the associated database IDs, and various other metadata:
+
+```{r message=FALSE, warning=FALSE}
+read_csv(here("tables", "table_S3_haplotype_sequences_metadata.csv"), col_names = TRUE)  %>%
+  kbl(caption="<strong>Table S3:</strong> Haplotype sequences metadata", format = "html", table.attr = "style='width:100%;'", escape = FALSE) %>%
+  kable_styling(position = "left")
+```
+
+### Table S4: Ant IDs and longitude/latitudes
+
+This table that has all of the ants, their site and nest information, and locations.
 
 ```{r message=FALSE, warning=FALSE}
 ## Merge ant IDs and locations with site IDs and names
@@ -1800,5 +1819,5 @@ ids_lats_lons %>%
          "Host species" = host,
          "Longitude" = lon,
          "Latitude" = lat) %>%
-  write_csv(here("tables", "ant_ids_and_locs.csv"))
+  write_csv(here("tables", "table_S4_ant_ids_and_locs.csv"))
 ```
